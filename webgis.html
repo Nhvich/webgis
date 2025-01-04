@@ -1,0 +1,2919 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebGIS地图浏览器</title>
+    <!-- 先引入 Turf.js -->
+    <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+    <!-- 正确引入 OpenLayers CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/openlayers/openlayers.github.io@master/en/v6.15.1/css/ol.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/geotiff"></script>
+    <script src="https://cdn.jsdelivr.net/npm/ol-shapefile@4.0.0/dist/ol-shapefile.js"></script>
+    <script src="https://unpkg.com/shp-write@0.3.2/shp-write.js"></script>
+    <script src="https://unpkg.com/shp-write@0.3.2/lib/dbf-writer.js"></script>
+    <!-- 移除其他 shp 相关的库，只保留这一个 -->
+    <script src="https://unpkg.com/shpjs@latest/dist/shp.js"></script>
+    <!-- 在 head 标签中添加 -->
+    <script src="https://unpkg.com/shapefile@0.6.6/dist/shapefile.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body, html {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+
+        #container {
+            width: 100%;
+            height: 100%;
+            position: relative;
+        }
+
+        #map {
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            left: 300px;
+            right: 0;
+        }
+
+        #sidebar {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 300px;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.95);
+            box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+            z-index: 1000;
+            border-right: 1px solid #eee;
+            overflow-y: auto;
+            overflow-x: hidden;
+        }
+
+        #sidebar::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        #sidebar::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 4px;
+        }
+
+        #sidebar::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 4px;
+        }
+
+        #sidebar::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+
+        #sidebar > * {
+            padding: 20px;
+        }
+
+        #sidebar > *:last-child {
+            margin-bottom: 20px;
+        }
+
+        #sidebar h2 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 18px;
+            border-bottom: 2px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+
+        #toolbar {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 6px;
+            padding: 6px;
+            z-index: 1000;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            border: 1px solid #eee;
+        }
+
+        .tool-button {
+            padding: 6px;
+            margin: 2px;
+            background: #fff;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s ease;
+            width: 30px;
+            height: 30px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .tool-button:hover {
+            background: #f8f8f8;
+            transform: translateY(-1px);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .tool-button.active {
+            background: #4CAF50;
+            color: white;
+            border-color: #45a049;
+            box-shadow: 0 2px 5px rgba(76,175,80,0.3);
+        }
+
+        .tool-button img {
+            width: 16px;
+            height: 16px;
+        }
+
+        .tool-button.active img {
+            filter: brightness(0) invert(1);
+        }
+
+        #status-bar {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            width: 240px;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 6px;
+            padding: 8px;
+            z-index: 1000;
+            font-size: 12px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            border: 1px solid #eee;
+        }
+
+        #coordinates, #scale {
+            display: block;
+            margin: 3px 0;
+            white-space: nowrap;
+            color: #333;
+            font-family: 'Consolas', monospace;
+            padding: 4px 6px;
+            background: #f8f8f8;
+            border-radius: 3px;
+            font-size: 11px;
+        }
+
+        .layer-item {
+            margin: 0;
+        }
+        
+        /* 添加或修改图层按钮样式 */
+        .layer-button {
+            display: flex;
+            align-items: center;
+            width: 100%;
+            height: 60px;  /* 调整高度 */
+            padding: 0;
+            background: white;
+            border: 2px solid #4dd2ff;  /* 添加蓝色边框 */
+            border-radius: 15px;        /* 增加圆角 */
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+            margin-bottom: 15px;      /* 增加按钮间距 */
+        }
+        
+        .layer-icon {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-size: cover;
+            background-position: center;
+            z-index: 1;
+        }
+        
+        /* 文字样式 */
+        .layer-button span {
+            position: relative;
+            z-index: 2;
+            width: 100%;
+            text-align: center;
+            font-size: 16px;
+            font-weight: bold;
+            color: white;
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);  /* 添加文字阴影 */
+        }
+
+        .layer-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 10px rgba(77, 210, 255, 0.3);  /* 蓝色阴影 */
+        }
+
+        .layer-button.active {
+            border-color: #4CAF50;
+            box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.3);
+        }
+
+        /* 高德地图图标 */
+        .gaode-layer .layer-icon {
+            background-color: #f0f0f0; /* 添加临时背景色 */
+            background-image: linear-gradient(rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.1)), url('icon/gaode.jpg');
+        }
+
+        /* ArcGIS卫星影像图标 */
+        .arcgis-layer .layer-icon {
+            background-image: linear-gradient(rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0.1)), url('icon/Arcgis.jpg');
+        }
+
+        /* 激活状态下的图标边框 */
+        .layer-button.active .layer-icon {
+            border-color: white;
+        }
+
+        .tooltip {
+            position: relative;
+            background: rgba(0, 0, 0, 0.8);
+            border-radius: 6px;
+            color: white;
+            padding: 6px 12px;
+            white-space: nowrap;
+            font-size: 13px;
+            pointer-events: none;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+
+        .tooltip-measure {
+            opacity: 1;
+            font-weight: bold;
+        }
+
+        .tooltip-static {
+            background-color: #ffcc33;
+            color: black;
+            border: 1px solid white;
+        }
+
+        .marker-tooltip {
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 15px;
+            font-size: 14px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.15);
+            min-width: 200px;
+        }
+
+        .marker-tooltip input[type="text"] {
+            width: 100%;
+            padding: 8px 12px;
+            margin-bottom: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.3s ease;
+        }
+
+        .marker-tooltip input[type="text"]:focus {
+            border-color: #4CAF50;
+            box-shadow: 0 0 0 2px rgba(76,175,80,0.2);
+        }
+
+        .marker-tooltip button {
+            width: 100%;
+            padding: 8px 16px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s ease;
+        }
+
+        .marker-tooltip button:hover {
+            background: #45a049;
+            transform: translateY(-1px);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+
+        /* 标注文本样式 */
+        .marker-label {
+            background: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            font-size: 12px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            pointer-events: none;
+            white-space: nowrap;
+        }
+
+        .file-upload-section {
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+        }
+
+        .file-upload-section h3 {
+            color: #333;
+            font-size: 16px;
+            margin-bottom: 15px;
+        }
+
+        .upload-button {
+            width: 100%;
+            padding: 10px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s ease;
+        }
+
+        .upload-button:hover {
+            background: #45a049;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+
+        .file-list {
+            margin-top: 10px;
+        }
+
+        .file-item {
+            padding: 8px;
+            margin: 5px 0;
+            background: #f8f8f8;
+            border-radius: 4px;
+            font-size: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .file-item:hover {
+            background: #f0f0f0;
+            transform: translateX(3px);
+        }
+
+        .file-item span {
+            flex: 1;
+            padding: 0 8px;
+        }
+
+        .file-item button {
+            padding: 3px 8px;
+            background: #ff4444;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 11px;
+            z-index: 1;
+        }
+
+        .tools-section {
+            margin: 20px 0;
+            padding: 15px;
+            background: #f8f8f8;
+            border-radius: 8px;
+        }
+
+        .tools-section h3 {
+            color: #333;
+            font-size: 16px;
+            margin-bottom: 15px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #4CAF50;
+        }
+
+        .tools-group {
+            margin: 15px 0;
+            padding: 15px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+        }
+
+        .tools-group h4 {
+            color: #333;
+            font-size: 14px;
+            margin-bottom: 15px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #4CAF50;
+            display: flex;
+            align-items: center;
+        }
+
+        .tools-group h4::before {
+            content: '';
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            margin-right: 8px;
+            background-size: contain;
+            background-repeat: no-repeat;
+        }
+
+        .tools-group.drawing h4::before {
+            background-image: url('icon/draw.png');
+        }
+
+        .tools-group.editing h4::before {
+            background-image: url('icon/edit.png');
+        }
+
+        .tool-buttons {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+
+        .tool-buttons button {
+            padding: 8px;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.3s ease;
+        }
+
+        .tool-buttons button:hover {
+            background: #f0f0f0;
+            transform: translateY(-2px);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .tool-buttons button.active {
+            background: #4CAF50;
+            color: white;
+            border-color: #45a049;
+        }
+
+        .tools-section,
+        .file-upload-section,
+        .layer-item {
+            width: 100%;
+            max-width: 280px;
+        }
+
+        .style-settings {
+            margin-top: 15px;
+            padding: 15px;
+            background: #f8f8f8;
+            border-radius: 6px;
+        }
+
+        .style-settings h5 {
+            color: #333;
+            font-size: 13px;
+            margin-bottom: 12px;
+            font-weight: 600;
+        }
+
+        .style-options {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .style-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .style-row label {
+            font-size: 12px;
+            color: #555;
+            width: 80px;
+        }
+
+        /* 修改 CSS 样式，添加标准属性和浏览器前缀 */
+        input[type="color"] {
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            appearance: none;
+            width: 40px;
+            height: 30px;
+            padding: 0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        input[type="range"] {
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            appearance: none;
+            width: 100%;
+            height: 6px;
+            background: #ddd;
+            border-radius: 3px;
+            outline: none;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 16px;
+            height: 16px;
+            background: #4CAF50;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+
+        input[type="range"]::-moz-range-thumb {
+            width: 16px;
+            height: 16px;
+            background: #4CAF50;
+            border-radius: 50%;
+            cursor: pointer;
+            border: none;
+        }
+
+        .style-row input[type="range"]::-webkit-slider-thumb:hover {
+            transform: scale(1.1);
+        }
+
+        .draw-buttons-container {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            margin-bottom: 15px;
+        }
+
+        .draw-button {
+            width: 50px;
+            height: 60px;
+            padding: 8px 4px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            background: white;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .draw-button:hover {
+            background: #f5f5f5;
+            transform: translateY(-2px);
+            box-shadow: 0 3px 6px rgba(0,0,0,0.1);
+        }
+
+        .draw-button.active {
+            background: #4CAF50;
+            border-color: #43A047;
+            box-shadow: 0 2px 4px rgba(76,175,80,0.3);
+        }
+
+        .draw-button img {
+            width: 22px;
+            height: 22px;
+            object-fit: contain;
+            transition: all 0.2s ease;
+        }
+
+        .draw-button span {
+            font-size: 11px;
+            color: #666;
+            text-align: center;
+            line-height: 1.2;
+        }
+
+        .draw-button.active span {
+            color: white;
+        }
+
+        .features-list {
+            margin-top: 15px;
+            padding: 12px;
+            background: #f8f8f8;
+            border-radius: 6px;
+        }
+
+        .features-list h5 {
+            color: #333;
+            font-size: 13px;
+            margin-bottom: 10px;
+            font-weight: 600;
+        }
+
+        .features-container {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .feature-item {
+            display: flex;
+            align-items: center;
+            padding: 8px;
+            margin: 4px 0;
+            background: white;
+            border: 1px solid #eee;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .feature-item:hover {
+            background: #f5f5f5;
+            transform: translateX(3px);
+        }
+
+        .feature-item.selected {
+            background: #e3f2fd;
+            border-color: #2196F3;
+            box-shadow: 0 2px 4px rgba(33, 150, 243, 0.2);
+        }
+
+        .feature-icon {
+            width: 20px;
+            height: 20px;
+            margin-right: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .feature-icon img {
+            width: 16px;
+            height: 16px;
+            object-fit: contain;
+        }
+
+        .feature-name {
+            flex: 1;
+        }
+
+        .feature-actions {
+            display: flex;
+            gap: 4px;
+        }
+
+        .feature-actions button {
+            padding: 4px;
+            background: none;
+            border: none;
+            cursor: pointer;
+            opacity: 0.6;
+            transition: opacity 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .feature-actions button:hover {
+            opacity: 1;
+            background: rgba(0, 0, 0, 0.05);
+            border-radius: 3px;
+        }
+
+        .download-btn img {
+            filter: invert(50%) sepia(50%) saturate(1000%) hue-rotate(190deg);
+        }
+
+        .download-btn:hover img {
+            filter: invert(50%) sepia(80%) saturate(1500%) hue-rotate(190deg);
+        }
+
+        .analysis-dialog {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            z-index: 2000;
+            min-width: 300px;
+        }
+
+        .analysis-dialog h3 {
+            color: #333;
+            margin-bottom: 15px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #4CAF50;
+        }
+
+        .dialog-content {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .input-group label {
+            font-size: 13px;
+            color: #666;
+        }
+
+        .input-group input[type="number"] {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            width: 100%;
+            font-size: 14px;
+        }
+
+        .style-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 5px;
+        }
+
+        .style-row label {
+            width: 70px;
+        }
+
+        .style-row input[type="color"] {
+            width: 40px;
+            height: 30px;
+            padding: 2px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+
+        .style-row input[type="range"] {
+            flex: 1;
+        }
+
+        .dialog-buttons {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        .dialog-buttons button {
+            padding: 8px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s ease;
+        }
+
+        .dialog-buttons .primary-button {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .dialog-buttons .secondary-button {
+            background: #f5f5f5;
+            color: #666;
+        }
+
+        .dialog-buttons button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        /* 分析工具按钮样式 */
+        .analysis-button {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .analysis-button img {
+            width: 20px;
+            height: 20px;
+        }
+
+        .analysis-button span {
+            flex: 1;
+            text-align: left;
+            font-size: 14px;
+            color: #333;
+        }
+
+        .analysis-button:hover {
+            background: #f5f5f5;
+            transform: translateX(3px);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .analysis-button.active {
+            background: #4CAF50;
+            border-color: #45a049;
+        }
+
+        .analysis-button.active span {
+            color: white;
+        }
+
+        .analysis-button.active img {
+            filter: brightness(0) invert(1);
+        }
+
+        /* 对话框样式 */
+        .dialog-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .analysis-dialog {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            min-width: 300px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+        }
+
+        .dialog-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .dialog-header h3 {
+            margin: 0;
+            color: #333;
+        }
+
+        .close-btn {
+            font-size: 24px;
+            cursor: pointer;
+            color: #666;
+        }
+
+        .dialog-content {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .input-group label {
+            color: #666;
+        }
+
+        .input-group input[type="number"] {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+
+        .style-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .dialog-buttons {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        .primary-button, .secondary-button {
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            border: none;
+            transition: all 0.3s ease;
+        }
+
+        .primary-button {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .secondary-button {
+            background: #f5f5f5;
+            color: #666;
+        }
+
+        .primary-button:hover {
+            background: #45a049;
+        }
+
+        .secondary-button:hover {
+            background: #e0e0e0;
+        }
+
+        /* 加载提示样式 */
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            z-index: 1000;
+        }
+
+        .loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* 文件操作按钮样式 */
+        .file-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            padding: 10px;
+        }
+
+        .file-button {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+            padding: 8px;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .file-button img {
+            width: 20px;
+            height: 20px;
+        }
+
+        .file-button span {
+            flex: 1;
+            text-align: left;
+            font-size: 14px;
+            color: #333;
+        }
+
+        .file-button:hover {
+            background: #f5f5f5;
+            transform: translateX(3px);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        /* 加载文件列表样式 */
+        .loaded-files {
+            margin-top: 10px;
+            border-top: 1px solid #eee;
+            padding-top: 10px;
+        }
+
+        .file-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 5px 8px;
+            margin-bottom: 5px;
+            background: #f9f9f9;
+            border: 1px solid #eee;
+            border-radius: 4px;
+        }
+
+        .file-item .file-name {
+            flex: 1;
+            font-size: 13px;
+            color: #333;
+            margin-right: 10px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .file-item .file-controls {
+            display: flex;
+            gap: 5px;
+        }
+
+        .file-item .file-controls button {
+            padding: 2px 6px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+            background: white;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .file-item .file-controls button:hover {
+            background: #f5f5f5;
+        }
+
+        .file-item .file-type-icon {
+            width: 16px;
+            height: 16px;
+            margin-right: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="sidebar">
+            <h2>图层管理</h2>
+            <div id="layers-list">
+                <div class="layer-item">
+                    <button class="layer-button gaode-layer" data-layer="gaode">
+                        <div class="layer-icon"></div>
+                        <span>高德地图</span>
+                    </button>
+                </div>
+                <div class="layer-item">
+                    <button class="layer-button arcgis-layer" data-layer="arcgis">
+                        <div class="layer-icon"></div>
+                        <span>ArcGIS卫星影像</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="tools-section">
+                <h3>工具箱</h3>
+                <div class="tools-group drawing">
+                    <h4>绘图工具</h4>
+                    <div class="draw-buttons-container">
+                        <button onclick="startDrawing('Point')" class="draw-button" title="绘制点">
+                            <img src="icon/point.png" alt="点">
+                            <span>绘制点</span>
+                        </button>
+                        <button onclick="startDrawing('LineString')" class="draw-button" title="绘制线">
+                            <img src="icon/line.png" alt="线">
+                            <span>绘制线</span>
+                        </button>
+                        <button onclick="startDrawing('Polygon')" class="draw-button" title="绘制面">
+                            <img src="icon/polygon.png" alt="面">
+                            <span>绘制面</span>
+                        </button>
+                        <button onclick="startDrawing('Circle')" class="draw-button" title="绘制圆">
+                            <img src="icon/circle.png" alt="圆">
+                            <span>绘制圆</span>
+                        </button>
+                        <button onclick="startDrawing('Box')" class="draw-button" title="绘制矩形">
+                            <img src="icon/rectangle.png" alt="矩形">
+                            <span>绘制矩形</span>
+                        </button>
+                    </div>
+                    <div class="style-settings">
+                        <h5>样式设置</h5>
+                        <div class="style-options">
+                            <div class="style-row">
+                                <label>填充颜色</label>
+                                <input type="color" id="fillColor" value="#ffffff" onchange="updateDrawStyle()">
+                                <input type="range" id="fillOpacity" min="0" max="1" step="0.1" value="0.2" onchange="updateDrawStyle()">
+                            </div>
+                            <div class="style-row">
+                                <label>边框颜色</label>
+                                <input type="color" id="strokeColor" value="#ffcc33" onchange="updateDrawStyle()">
+                            </div>
+                            <div class="style-row">
+                                <label>边框宽度</label>
+                                <input type="range" id="strokeWidth" min="1" max="10" value="2" onchange="updateDrawStyle()">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="tools-group editing">
+                    <h4>编辑工具</h4>
+                    <div class="tool-buttons">
+                        <button onclick="enableEdit()">选择编辑</button>
+                        <button onclick="deleteSelected()">删除选中</button>
+                        <button onclick="clearDrawings()">清空绘制</button>
+                    </div>
+                    <div class="features-list">
+                        <h5>已绘制图形</h5>
+                        <div id="featuresList" class="features-container">
+                            <!-- 图形列表将在这里动态生成 -->
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="tools-group analysis">
+                    <h4>分析工具</h4>
+                    <div class="tool-buttons">
+                        <button class="analysis-button" title="缓冲区分析">
+                            <img src="icon/buffer.png" alt="缓冲区">
+                            <span>缓冲区分析</span>
+                        </button>
+                        <button class="analysis-button" title="相交分析">
+                            <img src="icon/intersect.png" alt="相交">
+                            <span>相交分析</span>
+                        </button>
+                        <button class="analysis-button" title="合并分析">
+                            <img src="icon/union.png" alt="合并">
+                            <span>合并分析</span>
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="tools-group">
+                    <h4>空间查询</h4>
+                    <div class="tool-buttons">
+                        <button onclick="enableQuery()">空间查询</button>
+                        <button onclick="clearQuery()">清除查询</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="file-upload-section">
+                <h3>加载本地文件</h3>
+                <div class="file-buttons">
+                    <input type="file" id="shpFileInput" accept=".shp,.dbf,.prj,.shx" multiple style="display: none;">
+                    <input type="file" id="tifFileInput" accept=".tif,.tiff" multiple style="display: none;">
+                    <button class="file-button" onclick="document.getElementById('shpFileInput').click()">
+                        <img src="icon/shp.png" alt="Shapefile">
+                        <span>加载 Shapefile</span>
+                    </button>
+                    <button class="file-button" onclick="document.getElementById('tifFileInput').click()">
+                        <img src="icon/tif.png" alt="GeoTIFF">
+                        <span>加载 GeoTIFF</span>
+                    </button>
+                </div>
+                <div id="loaded-files" class="loaded-files">
+                    <!-- 加载的文件列表将显示在这里 -->
+                </div>
+            </div>
+        </div>
+        
+        <div id="map">
+            <!-- 地图将在这里渲染 -->
+        </div>
+
+        <div id="toolbar">
+            <button class="tool-button" title="平移">🖐️</button>
+            <button class="tool-button" title="放大">➕</button>
+            <button class="tool-button" title="缩小">➖</button>
+            <button class="tool-button" title="复位">🏠</button>
+            <button class="tool-button" title="测量">📏</button>
+            <button class="tool-button" title="标注">📍</button>
+        </div>
+
+        <div id="status-bar">
+            <span id="coordinates">坐标: 待更新</span>
+            <span id="scale">比例尺: 待更新</span>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/gh/openlayers/openlayers.github.io@master/en/v6.15.1/build/ol.js"></script>
+    <script>
+        let map;
+        let gaodeLayer;
+        let arcgisLayer;
+        let draw; // 用于绘制功能
+        let measure; // 用于测量功能
+        let localLayers = new Map(); // 存储本地图层
+        
+        // 定义全局变量
+        let drawSource;
+        let drawLayer;
+        let drawInteraction;
+        let modifyInteraction;
+        let selectInteraction;
+        
+        // 当前绘制样式
+        let currentStyle = {
+            fill: {
+                color: 'rgba(255, 255, 255, 0.2)'
+            },
+            stroke: {
+                color: '#ffcc33',
+                width: 2
+            },
+            image: {
+                radius: 7,
+                fill: {
+                    color: '#ffcc33'
+                }
+            }
+        };
+        
+        document.addEventListener('DOMContentLoaded', function() {
+            try {
+                console.log('开始初始化地图...');
+                initMap();
+                initLayerControls();
+                console.log('地图初始化完成');
+            } catch (error) {
+                console.error('地图初始化失败:', error);
+            }
+        });
+
+        function initMap() {
+            // 创建高德地图瓦片图层
+            gaodeLayer = new ol.layer.Tile({
+                source: new ol.source.XYZ({
+                    url: 'https://wprd0{1-4}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&style=7&x={x}&y={y}&z={z}',
+                    projection: 'EPSG:3857'
+                })
+            });
+
+            // 创建ArcGIS卫星影像图层
+            arcgisLayer = new ol.layer.Tile({
+                source: new ol.source.XYZ({
+                    url: 'https://server.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+                    projection: 'EPSG:3857'
+                }),
+                visible: false
+            });
+
+            // 创建地图
+            map = new ol.Map({
+                target: 'map',
+                layers: [gaodeLayer, arcgisLayer],
+                view: new ol.View({
+                    center: ol.proj.fromLonLat([113.868729, 34.043781]),
+                    zoom: 16,
+                    maxZoom: 20,
+                    minZoom: 1
+                }),
+                controls: ol.control.defaults().extend([
+                    new ol.control.ScaleLine(),
+                    new ol.control.ZoomSlider()
+                ]),
+                interactions: ol.interaction.defaults({
+                    mouseWheelZoom: false
+                }).extend([
+                    new ol.interaction.MouseWheelZoom({
+                        duration: 50,
+                        timeout: 0,
+                        useAnchor: true,
+                        constrainResolution: false,
+                        maxDelta: 2,
+                        smooth: false,
+                        trackpad: false
+                    })
+                ])
+            });
+
+            // 创建或确保状态栏存在
+            const statusBar = document.getElementById('status-bar') || document.createElement('div');
+            statusBar.id = 'status-bar';
+            statusBar.innerHTML = `
+                <span id="coordinates">坐标: 待更新</span>
+                <span id="scale">比例尺: 待更新</span>
+            `;
+            
+            if (!document.getElementById('status-bar')) {
+                document.getElementById('container').appendChild(statusBar);
+            }
+
+            // 等待地图加载完成
+            map.once('postrender', function() {
+                // 初始化绘图图层
+                initDrawLayer();
+
+                // 添加视图变化监听器
+                map.getView().on('change:resolution', updateScale);
+                map.getView().on('change:center', updateScale);
+
+                // 初始更新一次比例尺
+                updateScale();
+
+                // 添加鼠标移动监听器更新坐标
+                map.on('pointermove', function(evt) {
+                    const coords = ol.proj.transform(evt.coordinate, 'EPSG:3857', 'EPSG:4326');
+                    document.getElementById('coordinates').textContent = 
+                        `坐标: ${coords[0].toFixed(6)}, ${coords[1].toFixed(6)}`;
+                });
+
+                initToolbar();
+            });
+
+            // 将 map 对象设为全局变量
+            window.map = map;
+
+            console.log('地图对象创建完成');
+        }
+
+        function initLayerControls() {
+            const buttons = document.querySelectorAll('.layer-button');
+            buttons.forEach(button => {
+                button.addEventListener('click', function() {
+                    const layerType = this.dataset.layer;
+                    
+                    // 移除所有按钮的active类
+                    buttons.forEach(btn => btn.classList.remove('active'));
+                    // 添加当前按钮的active类
+                    this.classList.add('active');
+                    
+                    switch(layerType) {
+                        case 'gaode':
+                            gaodeLayer.setVisible(true);
+                            arcgisLayer.setVisible(false);
+                            break;
+                        case 'arcgis':
+                            gaodeLayer.setVisible(false);
+                            arcgisLayer.setVisible(true);
+                            break;
+                    }
+                });
+            });
+
+            // 默认激活高德地图按钮
+            buttons[0].classList.add('active');
+        }
+
+        // 在地图初始化后添加工具栏初始化
+        function initToolbar() {
+            const toolbar = document.createElement('div');
+            toolbar.id = 'toolbar';
+            toolbar.innerHTML = `
+                <button class="tool-button" title="平移">🖐️</button>
+                <button class="tool-button" title="放大">➕</button>
+                <button class="tool-button" title="缩小">➖</button>
+                <button class="tool-button" title="复位">🏠</button>
+                <button class="tool-button" title="测量">📏</button>
+                <button class="tool-button" title="标注">📍</button>
+            `;
+            document.getElementById('container').appendChild(toolbar);
+
+            // 为按钮添加事件监听
+            const buttons = toolbar.querySelectorAll('.tool-button');
+            let activeButton = null;  // 记录当前激活的按钮
+            let lastClickTime = 0;    // 记录上次点击时间
+
+            buttons.forEach(button => {
+                button.addEventListener('click', function(e) {
+                    const currentTime = new Date().getTime();
+                    const timeDiff = currentTime - lastClickTime;
+                    
+                    // 检查是否是双击（时间间隔小于300ms）
+                    if (timeDiff < 300 && this === activeButton) {
+                        // 双击当前激活的按钮，关闭功能
+                        this.classList.remove('active');
+                        clearInteractions();
+                        activeButton = null;
+                        lastClickTime = 0;
+                        return;
+                    }
+                    
+                    lastClickTime = currentTime;
+
+                    // 如果点击的是当前激活的按钮，不做任何操作
+                    if (this === activeButton) {
+                        return;
+                    }
+
+                    // 移除所有按钮的active状态
+                    buttons.forEach(btn => btn.classList.remove('active'));
+                    
+                    // 清除之前的交互
+                    clearInteractions();
+                    
+                    // 激活新功能
+                    switch(this.title) {
+                        case '平移':
+                            enablePan();
+                            this.classList.add('active');
+                            break;
+                        case '放大':
+                            enableZoomIn();
+                            break;  // 放大缩小不需要保持激活状态
+                        case '缩小':
+                            enableZoomOut();
+                            break;  // 放大缩小不需要保持激活状态
+                        case '复位':
+                            resetView();
+                            break;  // 复位不需要保持激活状态
+                        case '测量':
+                            enableMeasure();
+                            this.classList.add('active');
+                            break;
+                        case '标注':
+                            enableMarker();
+                            this.classList.add('active');
+                            break;
+                    }
+                    
+                    // 更新当前激活的按钮（除了放大、缩小和复位）
+                    activeButton = ['放大', '缩小', '复位'].includes(this.title) ? null : this;
+                });
+            });
+        }
+
+        // 添加工具栏功能函数
+        function enablePan() {
+            clearInteractions();
+            map.getView().setRotation(0);
+        }
+
+        function enableZoomIn() {
+            clearInteractions();
+            map.getView().animate({
+                zoom: map.getView().getZoom() + 1,
+                duration: 250
+            });
+        }
+
+        function enableZoomOut() {
+            clearInteractions();
+            map.getView().animate({
+                zoom: map.getView().getZoom() - 1,
+                duration: 250
+            });
+        }
+
+        function enableHome() {
+            clearInteractions();
+            map.getView().animate({
+                center: ol.proj.fromLonLat([116.397428, 39.90923]),
+                zoom: 12,
+                duration: 1000
+            });
+        }
+
+        function enableMeasure() {
+            clearInteractions();
+            
+            // 创建测量绘图交互
+            const measureDraw = new ol.interaction.Draw({
+                source: drawSource,
+                type: 'LineString',
+                style: new ol.style.Style({
+                    fill: new ol.style.Fill({
+                        color: 'rgba(255, 255, 255, 0.2)'
+                    }),
+                    stroke: new ol.style.Stroke({
+                        color: '#ffcc33',
+                        width: 2
+                    }),
+                    image: new ol.style.Circle({
+                        radius: 7,
+                        fill: new ol.style.Fill({
+                            color: '#ffcc33'
+                        })
+                    })
+                })
+            });
+
+            // 添加测量提示
+            let measureTooltipElement;
+            let measureTooltip;
+
+            function createMeasureTooltip() {
+                if (measureTooltipElement) {
+                    measureTooltipElement.parentNode.removeChild(measureTooltipElement);
+                }
+                measureTooltipElement = document.createElement('div');
+                measureTooltipElement.className = 'tooltip tooltip-measure';
+                measureTooltip = new ol.Overlay({
+                    element: measureTooltipElement,
+                    offset: [0, -15],
+                    positioning: 'bottom-center'
+                });
+                map.addOverlay(measureTooltip);
+            }
+
+            createMeasureTooltip();
+
+            // 监听绘图事件
+            let sketch;
+            measureDraw.on('drawstart', function(evt) {
+                sketch = evt.feature;
+                let tooltipCoord = evt.coordinate;
+
+                sketch.getGeometry().on('change', function(evt) {
+                    const geom = evt.target;
+                    let output = formatLength(geom);
+                    tooltipCoord = geom.getLastCoordinate();
+                    measureTooltipElement.innerHTML = output;
+                    measureTooltip.setPosition(tooltipCoord);
+                });
+            });
+
+            measureDraw.on('drawend', function() {
+                measureTooltipElement.className = 'tooltip tooltip-static';
+                measureTooltip.setOffset([0, -7]);
+                sketch = null;
+                createMeasureTooltip();
+            });
+
+            map.addInteraction(measureDraw);
+        }
+
+        // 修改 enableMarker 函数
+        function enableMarker() {
+            clearInteractions();
+            
+            const markerDraw = new ol.interaction.Draw({
+                source: drawSource,
+                type: 'Point',
+                style: new ol.style.Style({
+                    image: new ol.style.Circle({
+                        radius: 6,
+                        fill: new ol.style.Fill({
+                            color: '#4CAF50'
+                        }),
+                        stroke: new ol.style.Stroke({
+                            color: 'white',
+                            width: 2
+                        })
+                    })
+                })
+            });
+
+            markerDraw.on('drawend', function(evt) {
+                const feature = evt.feature;
+                const coord = feature.getGeometry().getCoordinates();
+                
+                // 创建标注对话框
+                const markerDialog = document.createElement('div');
+                markerDialog.className = 'marker-tooltip';
+                markerDialog.innerHTML = `
+                    <input type="text" id="markerText" placeholder="请输入标注内容" autofocus>
+                    <button id="markerSubmit">确定</button>
+                `;
+                
+                const overlay = new ol.Overlay({
+                    element: markerDialog,
+                    position: coord,
+                    positioning: 'bottom-center',
+                    offset: [0, -10],
+                    stopEvent: false
+                });
+                
+                map.addOverlay(overlay);
+                
+                // 自动聚焦输入框并添加事件监听
+                setTimeout(() => {
+                    const input = document.getElementById('markerText');
+                    const submitButton = document.getElementById('markerSubmit');
+                    
+                    if (input && submitButton) {
+                        input.focus();
+                        
+                        const handleSubmit = () => {
+                            const text = input.value.trim();
+                            if (text) {
+                                // 创建标注要素
+                                const markerFeature = new ol.Feature({
+                                    geometry: new ol.geom.Point(coord)
+                                });
+
+                                // 设置标注样式
+                                markerFeature.setStyle(new ol.style.Style({
+                                    image: new ol.style.Circle({
+                                        radius: 6,
+                                        fill: new ol.style.Fill({
+                                            color: '#4CAF50'
+                                        }),
+                                        stroke: new ol.style.Stroke({
+                                            color: 'white',
+                                            width: 2
+                                        })
+                                    }),
+                                    text: new ol.style.Text({
+                                        text: text,
+                                        offsetY: -15,
+                                        fill: new ol.style.Fill({
+                                            color: '#333'
+                                        }),
+                                        stroke: new ol.style.Stroke({
+                                            color: 'white',
+                                            width: 3
+                                        }),
+                                        font: '12px sans-serif'
+                                    })
+                                }));
+
+                                // 添加到图层
+                                drawSource.addFeature(markerFeature);
+
+                                // 移除标注对话框
+                                const overlays = map.getOverlays().getArray();
+                                overlays.slice().forEach(overlay => {
+                                    const element = overlay.getElement();
+                                    if (element && element.classList.contains('marker-tooltip')) {
+                                        map.removeOverlay(overlay);
+                                    }
+                                });
+
+                                // 更新要素列表
+                                updateFeaturesList();
+                            }
+                        };
+
+                        // 添加回车键监听
+                        input.addEventListener('keypress', function(e) {
+                            if (e.key === 'Enter') {
+                                handleSubmit();
+                            }
+                        });
+
+                        // 添加按钮点击监听
+                        submitButton.addEventListener('click', handleSubmit);
+                    }
+                }, 100);
+
+                // 移除临时点要素
+                drawSource.removeFeature(feature);
+            });
+
+            map.addInteraction(markerDraw);
+        }
+
+        // 修改 createMarkerLabel 函数
+        function createMarkerLabel(x, y) {
+            try {
+                const text = document.getElementById('markerText').value.trim();
+                if (!text) {
+                    alert('请输入标注内容');
+                    return;
+                }
+
+                // 创建标注要素
+                const feature = new ol.Feature({
+                    geometry: new ol.geom.Point([parseFloat(x), parseFloat(y)])
+                });
+
+                // 设置标注样式
+                feature.setStyle(new ol.style.Style({
+                    image: new ol.style.Circle({
+                        radius: 6,
+                        fill: new ol.style.Fill({
+                            color: '#4CAF50'
+                        }),
+                        stroke: new ol.style.Stroke({
+                            color: 'white',
+                            width: 2
+                        })
+                    }),
+                    text: new ol.style.Text({
+                        text: text,
+                        offsetY: -15,
+                        fill: new ol.style.Fill({
+                            color: '#333'
+                        }),
+                        stroke: new ol.style.Stroke({
+                            color: 'white',
+                            width: 3
+                        }),
+                        font: '12px sans-serif'
+                    })
+                }));
+
+                // 添加到图层
+                drawSource.addFeature(feature);
+
+                // 移除标注对话框
+                const overlays = map.getOverlays().getArray();
+                overlays.slice().forEach(overlay => {
+                    const element = overlay.getElement();
+                    if (element && element.classList.contains('marker-tooltip')) {
+                        map.removeOverlay(overlay);
+                    }
+                });
+
+                // 更新要素列表
+                updateFeaturesList();
+
+            } catch (error) {
+                console.error('创建标注时出错:', error);
+                alert('创建标注时出错: ' + error.message);
+            }
+        }
+
+        // 辅助函数：格式化长度
+        function formatLength(line) {
+            const length = ol.sphere.getLength(line);
+            let output;
+            if (length > 1000) {
+                output = (Math.round(length / 1000 * 100) / 100) + ' km';
+            } else {
+                output = (Math.round(length * 100) / 100) + ' m';
+            }
+            return output;
+        }
+
+        // 修改 clearInteractions 函数
+        function clearInteractions() {
+            // 移除测量和标注相关的图层
+            map.getLayers().getArray()
+                .filter(layer => layer instanceof ol.layer.Vector && layer !== drawLayer)  // 保留绘图图层
+                .forEach(layer => map.removeLayer(layer));
+            
+            // 移除所有overlay（测量提示和标注）
+            const overlays = map.getOverlays().getArray();
+            overlays.slice().forEach(overlay => {
+                const element = overlay.getElement();
+                if (element && (
+                    element.classList.contains('marker-tooltip') || 
+                    element.classList.contains('tooltip')
+                )) {
+                    map.removeOverlay(overlay);
+                }
+            });
+            
+            // 移除交互
+            if (measure) map.removeInteraction(measure);
+            if (draw) map.removeInteraction(draw);
+            if (drawInteraction) {
+                map.removeInteraction(drawInteraction);
+                drawInteraction = null;
+            }
+            if (selectInteraction) {
+                map.removeInteraction(selectInteraction);
+                selectInteraction = null;
+            }
+            if (modifyInteraction) {
+                map.removeInteraction(modifyInteraction);
+                modifyInteraction = null;
+            }
+
+            map.getInteractions().forEach(interaction => {
+                if (interaction instanceof ol.interaction.DragZoom || 
+                    interaction instanceof ol.interaction.Draw) {
+                    map.removeInteraction(interaction);
+                }
+            });
+            
+            // 重置变量
+            measure = null;
+            draw = null;
+
+            // 移除所有按钮的激活状态
+            document.querySelectorAll('.tool-button').forEach(btn => {
+                btn.classList.remove('active');
+            });
+        }
+
+        // 添加文件输入监听器
+        document.addEventListener('DOMContentLoaded', function() {
+            // Shapefile 文件输入监听
+            const shpFileInput = document.getElementById('shpFileInput');
+            shpFileInput.addEventListener('change', async function(event) {
+                try {
+                    const files = Array.from(event.target.files);
+                    
+                    // 处理 Shapefile 文件
+                    const shpFile = files.find(f => f.name.toLowerCase().endsWith('.shp'));
+                    const dbfFile = files.find(f => f.name.toLowerCase().endsWith('.dbf'));
+                    if (shpFile && dbfFile) {
+                        // 读取文件内容
+                        const [shpBuffer, dbfBuffer] = await Promise.all([
+                            readFileAsArrayBuffer(shpFile),
+                            readFileAsArrayBuffer(dbfFile)
+                        ]);
+
+                        // 解析 Shapefile
+                        const geojson = await shp.combine([
+                            await shp.parseShp(shpBuffer),
+                            await shp.parseDbf(dbfBuffer)
+                        ]);
+
+                        // 创建矢量图层
+                        const format = new ol.format.GeoJSON();
+                        const features = format.readFeatures(geojson, {
+                            dataProjection: 'EPSG:4326',
+                            featureProjection: map.getView().getProjection()
+                        });
+
+                        const vectorSource = new ol.source.Vector({
+                            features: features
+                        });
+
+                        const vectorLayer = new ol.layer.Vector({
+                            source: vectorSource,
+                            style: new ol.style.Style({
+                                fill: new ol.style.Fill({
+                                    color: 'rgba(255, 255, 255, 0.2)'
+                                }),
+                                stroke: new ol.style.Stroke({
+                                    color: '#ffcc33',
+                                    width: 2
+                                })
+                            })
+                        });
+
+                        // 添加图层到地图
+                        map.addLayer(vectorLayer);
+                        localLayers.set(shpFile.name, vectorLayer);
+                        updateFilesList(); // 添加这行
+
+                        // 缩放到图层范围
+                        if (vectorSource.getFeatures().length > 0) {
+                            const extent = vectorSource.getExtent();
+                            map.getView().fit(extent, {
+                                padding: [50, 50, 50, 50],
+                                duration: 0
+                            });
+                        }
+                    }
+                } catch (error) {
+                    console.error('处理 Shapefile 失败:', error);
+                    alert('处理 Shapefile 失败: ' + error.message);
+                }
+            });
+
+            // GeoTIFF 文件输入监听
+            const tifFileInput = document.getElementById('tifFileInput');
+            tifFileInput.addEventListener('change', async function(event) {
+                try {
+                    const files = Array.from(event.target.files);
+                    for (const tifFile of files) {
+                        await loadGeoTiff(tifFile);
+                    }
+                } catch (error) {
+                    console.error('处理 GeoTIFF 失败:', error);
+                    alert('处理 GeoTIFF 失败: ' + error.message);
+                }
+            });
+        });
+
+        // 读取文件为 ArrayBuffer
+        function readFileAsArrayBuffer(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = e => resolve(e.target.result);
+                reader.onerror = () => reject(new Error('读取文件失败'));
+                reader.readAsArrayBuffer(file);
+            });
+        }
+
+        // 确保正确引入 shp.js
+        function initShpSupport() {
+            const script = document.createElement('script');
+            script.src = 'https://unpkg.com/shpjs@latest/dist/shp.js';
+            script.onload = function() {
+                console.log('shp.js 加载成功');
+            };
+            script.onerror = function() {
+                console.error('shp.js 加载失败');
+                alert('加载 Shapefile 支持库失败，请检查网络连接');
+            };
+            document.head.appendChild(script);
+        }
+
+        // 在页面加载时初始化 shp.js
+        document.addEventListener('DOMContentLoaded', function() {
+            initShpSupport();
+        });
+
+        async function loadGeoTiff(file) {
+            try {
+                const arrayBuffer = await readFileAsArrayBuffer(file);
+                const tiff = await GeoTIFF.fromArrayBuffer(arrayBuffer);
+                const image = await tiff.getImage();
+                
+                // 获取图像信息
+                const width = image.getWidth();
+                const height = image.getHeight();
+                const [minX, minY, maxX, maxY] = image.getBoundingBox();
+                
+                // 创建画布
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                const imageData = ctx.createImageData(width, height);
+
+                // 分块读取数据
+                const CHUNK_SIZE = 1000; // 每次处理的行数
+                const bands = (await image.getSamplesPerPixel());
+
+                for (let startRow = 0; startRow < height; startRow += CHUNK_SIZE) {
+                    const endRow = Math.min(startRow + CHUNK_SIZE, height);
+                    const window = [0, startRow, width, endRow];
+                    
+                    const data = await image.readRasters({
+                        window: window,
+                        samples: bands >= 3 ? [0, 1, 2] : [0]
+                    });
+
+                    // 处理这一块数据
+                    for (let i = 0; i < endRow - startRow; i++) {
+                        for (let j = 0; j < width; j++) {
+                            const pixelIndex = ((startRow + i) * width + j) * 4;
+                            const dataIndex = i * width + j;
+
+                            if (bands >= 3) {
+                                // RGB显示
+                                imageData.data[pixelIndex] = data[0][dataIndex];     // R
+                                imageData.data[pixelIndex + 1] = data[1][dataIndex]; // G
+                                imageData.data[pixelIndex + 2] = data[2][dataIndex]; // B
+                            } else {
+                                // 灰度显示
+                                const value = data[0][dataIndex];
+                                imageData.data[pixelIndex] = value;
+                                imageData.data[pixelIndex + 1] = value;
+                                imageData.data[pixelIndex + 2] = value;
+                            }
+                            imageData.data[pixelIndex + 3] = 255; // Alpha
+                        }
+                    }
+                }
+
+                ctx.putImageData(imageData, 0, 0);
+
+                // 创建图层
+                const extent = [minX, minY, maxX, maxY];
+                const imageLayer = new ol.layer.Image({
+                    source: new ol.source.ImageStatic({
+                        url: canvas.toDataURL(),
+                        imageExtent: extent,
+                        projection: 'EPSG:4326'
+                    }),
+                    opacity: 1
+                });
+
+                // 添加图层并立即显示
+                map.addLayer(imageLayer);
+                localLayers.set(file.name, imageLayer);
+                updateFilesList(); // 添加这行
+
+                // 转换并设置视图范围，不使用动画
+                const transformedExtent = ol.proj.transformExtent(
+                    extent,
+                    'EPSG:4326',
+                    'EPSG:3857'
+                );
+                map.getView().fit(transformedExtent, {
+                    padding: [50, 50, 50, 50],
+                    duration: 0  // 设置为0移除动画
+                });
+
+            } catch (error) {
+                console.error('解析 GeoTIFF 失败:', error);
+                alert('解析 GeoTIFF 失败: ' + error.message);
+            }
+        }
+
+        // 更新文件列表显示
+        function updateFilesList() {
+            const filesList = document.getElementById('loaded-files');
+            if (!filesList) return;
+
+            let filesHtml = '';
+            localLayers.forEach((layer, name) => {
+                const isShp = name.toLowerCase().endsWith('.shp');
+                const isTif = name.toLowerCase().endsWith('.tif') || name.toLowerCase().endsWith('.tiff');
+                
+                filesHtml += `
+                    <div class="file-item">
+                        <img class="file-type-icon" src="icon/${isShp ? 'shp' : 'tif'}.png" 
+                             alt="${isShp ? 'Shapefile' : 'GeoTIFF'}">
+                        <span class="file-name">${name}</span>
+                        <div class="file-controls">
+                            <button onclick="toggleLayerVisibility('${name}')" 
+                                    title="${layer.getVisible() ? '隐藏' : '显示'}">
+                                ${layer.getVisible() ? '👁️' : '👁️‍🗨️'}
+                            </button>
+                            <button onclick="removeLayer('${name}')" title="删除">×</button>
+                        </div>
+                    </div>
+                `;
+            });
+
+            filesList.innerHTML = filesHtml || '<div class="no-files">暂无加载的文件</div>';
+        }
+
+        // 修改文件处理函数，在添加图层后更新文件列表
+        function handleShapefile(shpFile, dbfFile) {
+            // ... 现有代码 ...
+            
+            // 添加到地图后更新文件列表
+            map.addLayer(vectorLayer);
+            localLayers.set(shpFile.name, vectorLayer);
+            updateFilesList(); // 添加这行
+        }
+
+        // 修改图层删除函数
+        function removeLayer(layerName) {
+            const layer = localLayers.get(layerName);
+            if (layer) {
+                map.removeLayer(layer);
+                localLayers.delete(layerName);
+                updateFilesList(); // 更新文件列表
+            }
+        }
+
+        // 添加一个通用的图层点击事件处理函数
+        function addLayerClickHandler(layer, fileName) {
+            const fileList = document.getElementById('fileList');
+            const items = fileList.getElementsByClassName('file-item');
+            for (let item of items) {
+                if (item.firstElementChild.textContent === fileName) {
+                    item.addEventListener('click', function(e) {
+                        // 如果点击的是删除按钮，不执行缩放
+                        if (e.target.tagName === 'BUTTON') return;
+                        
+                        // 获取图层范围并缩放
+                        if (layer instanceof ol.layer.Vector) {
+                            const extent = layer.getSource().getExtent();
+                            map.getView().fit(extent, {
+                                padding: [50, 50, 50, 50],
+                                duration: 1000
+                            });
+                        } else if (layer instanceof ol.layer.Image) {
+                            const source = layer.getSource();
+                            const extent = source.getImageExtent();
+                            const transformedExtent = ol.proj.transformExtent(
+                                extent,
+                                'EPSG:4326',
+                                'EPSG:3857'
+                            );
+                            map.getView().fit(transformedExtent, {
+                                padding: [50, 50, 50, 50],
+                                duration: 1000
+                            });
+                        }
+                    });
+                }
+            }
+        }
+
+        // 初始化绘图图层
+        function initDrawLayer() {
+            drawSource = new ol.source.Vector();
+            drawLayer = new ol.layer.Vector({
+                source: drawSource,
+                style: new ol.style.Style({
+                    fill: new ol.style.Fill({
+                        color: 'rgba(255, 255, 255, 0.2)'
+                    }),
+                    stroke: new ol.style.Stroke({
+                        color: '#ffcc33',
+                        width: 2
+                    }),
+                    image: new ol.style.Circle({
+                        radius: 7,
+                        fill: new ol.style.Fill({
+                            color: '#ffcc33'
+                        })
+                    })
+                })
+            });
+            map.addLayer(drawLayer);
+        }
+
+        // 修改 startDrawing 函数
+        function startDrawing(type) {
+            let lastClickTime = 0;
+            const button = document.querySelector(`button[onclick="startDrawing('${type}')"]`);
+            const currentTime = new Date().getTime();
+            
+            // 检查是否是双击（时间间隔小于300ms）
+            if (button.classList.contains('active') && currentTime - lastClickTime < 300) {
+                // 双击时关闭绘图功能
+                clearInteractions();
+                button.classList.remove('active');
+                return;
+            }
+            
+            lastClickTime = currentTime;
+
+            // 清除之前的交互
+            clearInteractions();
+            
+            // 移除所有按钮的激活状态
+            document.querySelectorAll('.draw-button').forEach(btn => {
+                btn.classList.remove('active');
+            });
+
+            // 激活当前按钮
+            button.classList.add('active');
+
+            // 处理矩形绘制
+            let geometryType = type;
+            let geometryFunction;
+            
+            if (type === 'Box') {
+                geometryType = 'Circle';
+                geometryFunction = ol.interaction.Draw.createBox();
+            }
+
+            // 创建绘图交互
+            draw = new ol.interaction.Draw({
+                source: drawSource,
+                type: geometryType,
+                geometryFunction: geometryFunction,
+                style: new ol.style.Style({
+                    fill: new ol.style.Fill({
+                        color: 'rgba(255, 255, 255, 0.2)'
+                    }),
+                    stroke: new ol.style.Stroke({
+                        color: '#ffcc33',
+                        width: 2
+                    }),
+                    image: new ol.style.Circle({
+                        radius: 7,
+                        fill: new ol.style.Fill({
+                            color: '#ffcc33'
+                        })
+                    })
+                })
+            });
+
+            // 添加绘图完成事件监听
+            draw.on('drawend', function(evt) {
+                // 设置默认样式
+                evt.feature.setStyle(new ol.style.Style({
+                    fill: new ol.style.Fill({
+                        color: 'rgba(255, 255, 255, 0.2)'
+                    }),
+                    stroke: new ol.style.Stroke({
+                        color: '#ffcc33',
+                        width: 2
+                    }),
+                    image: new ol.style.Circle({
+                        radius: 7,
+                        fill: new ol.style.Fill({
+                            color: '#ffcc33'
+                        })
+                    })
+                }));
+                
+                // 更新要素列表
+                updateFeaturesList();
+            });
+
+            map.addInteraction(draw);
+        }
+
+        // 启用编辑功能
+        function enableEdit() {
+            clearInteractions();
+            
+            // 创建选择交互，允许多选
+            selectInteraction = new ol.interaction.Select({
+                layers: [drawLayer],
+                multi: true,  // 允许多选
+                toggleCondition: ol.events.condition.shiftKeyOnly  // 使用Shift键进行多选
+            });
+
+            map.addInteraction(selectInteraction);
+
+            // 创建修改交互
+            modifyInteraction = new ol.interaction.Modify({
+                features: selectInteraction.getFeatures()
+            });
+            map.addInteraction(modifyInteraction);
+
+            // 添加选择变化事件监听器
+            selectInteraction.on('select', function(e) {
+                console.log('选择要素变化:', e.selected.length, '个要素被选中');
+            });
+        }
+
+        // 删除选中的要素
+        function deleteSelected() {
+            if (!selectInteraction) return;
+            const features = selectInteraction.getFeatures();
+            features.forEach(feature => {
+                drawSource.removeFeature(feature);
+            });
+            features.clear();
+            updateFeaturesList();
+        }
+
+        // 清空所有绘制的要素
+        function clearDrawings() {
+            if (drawSource) {
+                drawSource.clear();
+                updateFeaturesList();
+            }
+        }
+
+        // 更新绘制样式
+        function updateDrawStyle() {
+            const fillColor = document.getElementById('fillColor').value;
+            const fillOpacity = document.getElementById('fillOpacity').value;
+            const strokeColor = document.getElementById('strokeColor').value;
+            const strokeWidth = document.getElementById('strokeWidth').value;
+
+            // 更新当前样式
+            currentStyle = {
+                fill: {
+                    color: hexToRgba(fillColor, fillOpacity)
+                },
+                stroke: {
+                    color: strokeColor,
+                    width: parseInt(strokeWidth)
+                },
+                image: {
+                    radius: 7,
+                    fill: {
+                        color: strokeColor
+                    }
+                }
+            };
+
+            // 更新绘图图层的样式
+            if (drawLayer) {
+                drawLayer.setStyle(new ol.style.Style({
+                    fill: new ol.style.Fill(currentStyle.fill),
+                    stroke: new ol.style.Stroke(currentStyle.stroke),
+                    image: new ol.style.Circle({
+                        radius: currentStyle.image.radius,
+                        fill: new ol.style.Fill(currentStyle.image.fill)
+                    })
+                }));
+            }
+        }
+
+        // 辅助函数：将十六进制颜色转换为 rgba
+        function hexToRgba(hex, opacity) {
+            // 移除 # 号（如果存在）
+            hex = hex.replace('#', '');
+            
+            // 解析 RGB 值
+            const r = parseInt(hex.substring(0, 2), 16);
+            const g = parseInt(hex.substring(2, 4), 16);
+            const b = parseInt(hex.substring(4, 6), 16);
+            
+            // 返回 rgba 格式的颜色字符串
+            return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+        }
+
+        // 更新要素列表
+        function updateFeaturesList() {
+            const featuresList = document.getElementById('featuresList');
+            featuresList.innerHTML = '';
+            
+            const features = drawSource.getFeatures();
+            features.forEach((feature, index) => {
+                const geometry = feature.getGeometry();
+                const type = geometry.getType();
+                
+                const featureItem = document.createElement('div');
+                featureItem.className = 'feature-item';
+                featureItem.innerHTML = `
+                    <div class="feature-icon">
+                        <img src="icon/${getGeometryIcon(type)}" alt="${type}">
+                    </div>
+                    <div class="feature-name">${getGeometryName(type)} ${index + 1}</div>
+                    <div class="feature-actions">
+                        <button class="zoom-btn" data-index="${index}" title="缩放至">
+                            <img src="icon/zoom.png" alt="缩放" width="12">
+                        </button>
+                        <button class="download-btn" data-index="${index}" title="下载KML">
+                            <img src="icon/download.png" alt="下载" width="12">
+                        </button>
+                        <button class="delete-btn" data-index="${index}" title="删除">
+                            <img src="icon/delete.png" alt="删除" width="12">
+                        </button>
+                    </div>
+                `;
+                
+                // 添加点击事件以选择要素
+                featureItem.addEventListener('click', (e) => {
+                    // 检查是否点击了按钮
+                    if (!e.target.closest('button')) {
+                        selectFeature(feature);
+                        updateFeatureSelection(featureItem);
+                    }
+                });
+
+                // 为按钮添加单独的事件监听器
+                featureItem.querySelector('.zoom-btn').addEventListener('click', (e) => {
+                    e.stopPropagation(); // 阻止事件冒泡
+                    const index = parseInt(e.currentTarget.dataset.index);
+                    zoomToFeature(index);
+                });
+
+                featureItem.querySelector('.delete-btn').addEventListener('click', (e) => {
+                    e.stopPropagation(); // 阻止事件冒泡
+                    const index = parseInt(e.currentTarget.dataset.index);
+                    deleteFeature(index);
+                });
+
+                // 添加下载按钮的事件监听器
+                featureItem.querySelector('.download-btn').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const index = parseInt(e.currentTarget.dataset.index);
+                    downloadFeatureAsKML(index);
+                });
+                
+                featuresList.appendChild(featureItem);
+            });
+        }
+
+        // 获取几何类型对应的图标
+        function getGeometryIcon(type) {
+            switch (type) {
+                case 'Point': return 'point.png';
+                case 'LineString': return 'line.png';
+                case 'Polygon': return 'polygon.png';
+                case 'Circle': return 'circle.png';
+                default: return 'shape.png';
+            }
+        }
+
+        // 获取几何类型的中文名称
+        function getGeometryName(type) {
+            switch (type) {
+                case 'Point': return '点';
+                case 'LineString': return '线';
+                case 'Polygon': return '面';
+                case 'Circle': return '圆';
+                default: return '图形';
+            }
+        }
+
+        // 缩放到指定要素
+        function zoomToFeature(index) {
+            const features = drawSource.getFeatures();
+            if (features[index]) {
+                const extent = features[index].getGeometry().getExtent();
+                map.getView().fit(extent, {
+                    padding: [50, 50, 50, 50],
+                    duration: 500
+                });
+            }
+        }
+
+        // 删除指定要素
+        function deleteFeature(index) {
+            const features = drawSource.getFeatures();
+            if (features[index]) {
+                drawSource.removeFeature(features[index]);
+                updateFeaturesList();
+            }
+        }
+
+        // 选择要素
+        function selectFeature(feature) {
+            if (selectInteraction) {
+                selectInteraction.getFeatures().clear();
+                selectInteraction.getFeatures().push(feature);
+            }
+        }
+
+        // 更新要素选择状态的视觉效果
+        function updateFeatureSelection(selectedItem) {
+            document.querySelectorAll('.feature-item').forEach(item => {
+                item.classList.remove('selected');
+            });
+            selectedItem.classList.add('selected');
+        }
+
+        // 添加下载KML的功能
+        function downloadFeatureAsKML(index) {
+            const features = drawSource.getFeatures();
+            if (features[index]) {
+                const feature = features[index];
+                const geometry = feature.getGeometry();
+                const type = geometry.getType();
+                
+                // 创建KML格式化器
+                const format = new ol.format.KML({
+                    extractStyles: true,
+                    showPointNames: true
+                });
+                
+                // 转换要素为KML
+                const kml = format.writeFeatures([feature], {
+                    dataProjection: 'EPSG:4326',
+                    featureProjection: 'EPSG:3857'
+                });
+                
+                // 创建Blob对象
+                const blob = new Blob([kml], {type: 'application/vnd.google-earth.kml+xml'});
+                
+                // 创建下载链接
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.style.display = 'none';
+                a.href = url;
+                a.download = `${getGeometryName(type)}_${index + 1}.kml`;
+                
+                // 触发下载
+                document.body.appendChild(a);
+                a.click();
+                
+                // 清理
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+            }
+        }
+
+        // 修改 updateScale 函数
+        function updateScale() {
+            if (!map) return; // 添加检查
+
+            const view = map.getView();
+            if (!view) return; // 添加检查
+
+            const projection = view.getProjection();
+            const center = view.getCenter();
+            const resolution = view.getResolution();
+            
+            if (!projection || !resolution) return; // 添加检查
+            
+            // 计算比例尺
+            const mpu = projection.getMetersPerUnit();
+            const dpi = 25.4 / 0.28;
+            const scale = Math.round(resolution * mpu * 39.37 * dpi);
+            
+            // 格式化比例尺显示
+            let scaleText;
+            if (scale >= 1000000) {
+                scaleText = `1:${(scale/1000000).toFixed(1)}M`;
+            } else if (scale >= 1000) {
+                scaleText = `1:${(scale/1000).toFixed(0)}K`;
+            } else {
+                scaleText = `1:${scale}`;
+            }
+            
+            const scaleElement = document.getElementById('scale');
+            if (scaleElement) {
+                scaleElement.textContent = `比例尺: ${scaleText}`;
+            }
+        }
+
+        // 分析工具功能
+        function initAnalysisTools() {
+            // 为分析工具按钮添加点击事件
+            document.querySelectorAll('.analysis-button').forEach(button => {
+                button.addEventListener('click', function() {
+                    const type = this.getAttribute('title');
+                    switch(type) {
+                        case '缓冲区分析':
+                            showBufferDialog();
+                            break;
+                        case '相交分析':
+                            showIntersectDialog();
+                            break;
+                        case '合并分析':
+                            showUnionDialog();
+                            break;
+                    }
+                });
+            });
+        }
+
+        // 缓冲区分析对话框
+        function showBufferDialog() {
+            const dialogHtml = `
+                <div class="analysis-dialog" id="bufferDialog">
+                    <div class="dialog-header">
+                        <h3>缓冲区分析</h3>
+                        <span class="close-btn" onclick="closeDialog('bufferDialog')">&times;</span>
+                    </div>
+                    <div class="dialog-content">
+                        <div class="input-group">
+                            <label>缓冲距离 (米):</label>
+                            <input type="number" id="bufferDistance" value="1000" min="1">
+                        </div>
+                        <div class="input-group">
+                            <label>样式设置:</label>
+                            <div class="style-row">
+                                <label>填充颜色:</label>
+                                <input type="color" id="bufferFillColor" value="#66ccff">
+                                <input type="range" id="bufferOpacity" min="0" max="1" step="0.1" value="0.3">
+                            </div>
+                        </div>
+                        <div class="dialog-buttons">
+                            <button class="primary-button" onclick="executeBuffer()">确定</button>
+                            <button class="secondary-button" onclick="closeDialog('bufferDialog')">取消</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            showDialog(dialogHtml);
+        }
+
+        // 相交分析对话框
+        function showIntersectDialog() {
+            const dialogHtml = `
+                <div class="analysis-dialog" id="intersectDialog">
+                    <div class="dialog-header">
+                        <h3>相交分析</h3>
+                        <span class="close-btn" onclick="closeDialog('intersectDialog')">&times;</span>
+                    </div>
+                    <div class="dialog-content">
+                        <p>请先选择两个要素进行相交分析</p>
+                        <div class="dialog-buttons">
+                            <button class="primary-button" onclick="executeIntersect()">开始分析</button>
+                            <button class="secondary-button" onclick="closeDialog('intersectDialog')">取消</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            showDialog(dialogHtml);
+        }
+
+        // 合并分析对话框
+        function showUnionDialog() {
+            const dialogHtml = `
+                <div class="analysis-dialog" id="unionDialog">
+                    <div class="dialog-header">
+                        <h3>合并分析</h3>
+                        <span class="close-btn" onclick="closeDialog('unionDialog')">&times;</span>
+                    </div>
+                    <div class="dialog-content">
+                        <p>请先选择要合并的要素</p>
+                        <div class="dialog-buttons">
+                            <button class="primary-button" onclick="executeUnion()">开始合并</button>
+                            <button class="secondary-button" onclick="closeDialog('unionDialog')">取消</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            showDialog(dialogHtml);
+        }
+
+        // 通用对话框显示函数
+        function showDialog(html) {
+            const overlay = document.createElement('div');
+            overlay.className = 'dialog-overlay';
+            overlay.innerHTML = html;
+            document.body.appendChild(overlay);
+        }
+
+        // 通用对话框关闭函数
+        function closeDialog(dialogId) {
+            const dialog = document.getElementById(dialogId);
+            if (dialog && dialog.parentElement) {
+                dialog.parentElement.remove();
+            }
+        }
+
+        // 在页面加载完成后初始化分析工具
+        document.addEventListener('DOMContentLoaded', initAnalysisTools);
+
+        // 执行缓冲区分析
+        function executeBuffer() {
+            try {
+                // 检查是否有选中的要素
+                if (!selectInteraction || selectInteraction.getFeatures().getLength() === 0) {
+                    alert('请先选择要素');
+                    closeDialog('bufferDialog');
+                    return;
+                }
+
+                const distance = parseFloat(document.getElementById('bufferDistance').value);
+                const fillColor = document.getElementById('bufferFillColor').value;
+                const opacity = document.getElementById('bufferOpacity').value;
+
+                const selectedFeatures = selectInteraction.getFeatures();
+                const feature = selectedFeatures.item(0);
+
+                // 转换要素为GeoJSON
+                const format = new ol.format.GeoJSON();
+                const geojson = format.writeFeatureObject(feature, {
+                    dataProjection: 'EPSG:4326',
+                    featureProjection: 'EPSG:3857'
+                });
+
+                // 使用turf创建缓冲区
+                const buffered = turf.buffer(geojson, distance / 1000, { 
+                    units: 'kilometers',
+                    steps: 64  // 增加步数使缓冲区更平滑
+                });
+
+                // 转换回OpenLayers要素
+                const bufferFeature = format.readFeature(buffered, {
+                    dataProjection: 'EPSG:4326',
+                    featureProjection: 'EPSG:3857'
+                });
+
+                // 设置缓冲区样式
+                const bufferStyle = new ol.style.Style({
+                    fill: new ol.style.Fill({
+                        color: hexToRgba(fillColor, opacity)
+                    }),
+                    stroke: new ol.style.Stroke({
+                        color: fillColor,
+                        width: 2
+                    })
+                });
+                bufferFeature.setStyle(bufferStyle);
+
+                // 添加到图层并确保立即渲染
+                drawSource.addFeature(bufferFeature);
+                
+                // 缩放到缓冲区范围
+                const extent = bufferFeature.getGeometry().getExtent();
+                map.getView().fit(extent, {
+                    padding: [50, 50, 50, 50],
+                    duration: 500
+                });
+
+                // 触发图层更新
+                drawSource.changed();
+                drawLayer.changed();
+                
+                // 更新要素列表
+                updateFeaturesList();
+
+                // 关闭对话框
+                closeDialog('bufferDialog');
+
+                // 提示成功
+                alert('缓冲区分析完成');
+
+            } catch (error) {
+                console.error('执行缓冲区分析时出错:', error);
+                alert('执行缓冲区分析失败: ' + error.message);
+            }
+        }
+
+        // 执行相交分析
+        function executeIntersect() {
+            try {
+                // 先启用选择模式
+                if (!selectInteraction) {
+                    enableEdit();
+                }
+
+                // 检查选中的要素数量
+                const selectedFeatures = selectInteraction.getFeatures();
+                if (selectedFeatures.getLength() < 2) {
+                    alert('请先选择两个要素进行相交分析\n\n操作步骤：\n1. 按住Shift键\n2. 点击选择第一个要素\n3. 继续按住Shift键\n4. 点击选择第二个要素');
+                    return;
+                }
+
+                const features = selectedFeatures.getArray();
+                const format = new ol.format.GeoJSON();
+
+                // 转换要素为GeoJSON并处理特殊几何类型
+                const feature1 = processGeometry(features[0], format);
+                const feature2 = processGeometry(features[1], format);
+
+                // 计算相交
+                const intersection = turf.intersect(feature1, feature2);
+
+                if (intersection) {
+                    // 转换回OpenLayers要素
+                    const intersectFeature = format.readFeature(intersection, {
+                        dataProjection: 'EPSG:4326',
+                        featureProjection: 'EPSG:3857'
+                    });
+
+                    // 设置相交结果样式
+                    intersectFeature.setStyle(new ol.style.Style({
+                        fill: new ol.style.Fill({
+                            color: 'rgba(255, 100, 100, 0.3)'
+                        }),
+                        stroke: new ol.style.Stroke({
+                            color: '#ff4444',
+                            width: 2
+                        })
+                    }));
+
+                    // 添加到图层
+                    drawSource.addFeature(intersectFeature);
+
+                    // 缩放到相交结果范围
+                    const extent = intersectFeature.getGeometry().getExtent();
+                    map.getView().fit(extent, {
+                        padding: [50, 50, 50, 50],
+                        duration: 500
+                    });
+
+                    // 更新要素列表
+                    updateFeaturesList();
+                    closeDialog('intersectDialog');
+                    alert('相交分析完成');
+                } else {
+                    alert('所选要素没有相交部分');
+                }
+
+            } catch (error) {
+                console.error('执行相交分析时出错:', error);
+                alert('执行相交分析失败: ' + error.message);
+            }
+        }
+
+        // 执行合并分析
+        function executeUnion() {
+            try {
+                if (!selectInteraction || selectInteraction.getFeatures().getLength() < 2) {
+                    alert('请先选择至少两个要素');
+                    closeDialog('unionDialog');
+                    return;
+                }
+
+                const features = selectInteraction.getFeatures().getArray();
+                const format = new ol.format.GeoJSON();
+                let unionFeature = null;
+
+                // 转换并合并要素
+                features.forEach((feature, index) => {
+                    const geojson = processGeometry(feature, format);
+
+                    if (index === 0) {
+                        unionFeature = geojson;
+                    } else {
+                        unionFeature = turf.union(unionFeature, geojson);
+                    }
+                });
+
+                if (unionFeature) {
+                    // 转换回OpenLayers要素
+                    const mergedFeature = format.readFeature(unionFeature, {
+                        dataProjection: 'EPSG:4326',
+                        featureProjection: 'EPSG:3857'
+                    });
+
+                    // 设置合并结果样式
+                    mergedFeature.setStyle(new ol.style.Style({
+                        fill: new ol.style.Fill({
+                            color: 'rgba(100, 255, 100, 0.3)'
+                        }),
+                        stroke: new ol.style.Stroke({
+                            color: '#44cc44',
+                            width: 2
+                        })
+                    }));
+
+                    // 添加到图层
+                    drawSource.addFeature(mergedFeature);
+
+                    // 缩放到结果范围
+                    const extent = mergedFeature.getGeometry().getExtent();
+                    map.getView().fit(extent, {
+                        padding: [50, 50, 50, 50],
+                        duration: 500
+                    });
+
+                    // 更新要素列表
+                    updateFeaturesList();
+                    closeDialog('unionDialog');
+                    alert('合并分析完成');
+                }
+
+            } catch (error) {
+                console.error('执行合并分析时出错:', error);
+                alert('执行合并分析失败: ' + error.message);
+            }
+        }
+
+        // 处理几何要素
+        function processGeometry(feature, format) {
+            const geometry = feature.getGeometry();
+            const type = geometry.getType();
+            
+            // 转换为GeoJSON
+            let geojson = format.writeFeatureObject(feature, {
+                dataProjection: 'EPSG:4326',
+                featureProjection: 'EPSG:3857'
+            });
+
+            // 处理特殊几何类型
+            if (type === 'Circle') {
+                // 将圆转换为32边形
+                const center = geometry.getCenter();
+                const radius = geometry.getRadius();
+                const circle = turf.circle(
+                    turf.point(ol.proj.transform(center, 'EPSG:3857', 'EPSG:4326')),
+                    radius / 1000, // 转换为千米
+                    { steps: 32, units: 'kilometers' }
+                );
+                geojson = circle;
+            } else if (type === 'LineString') {
+                // 为线条创建缓冲区
+                const line = geojson;
+                const buffered = turf.buffer(line, 0.1, { units: 'meters' });
+                geojson = buffered;
+            }
+
+            return geojson;
+        }
+
+        // 辅助函数：转换十六进制颜色到rgba
+        function hexToRgba(hex, opacity) {
+            hex = hex.replace('#', '');
+            const r = parseInt(hex.substring(0, 2), 16);
+            const g = parseInt(hex.substring(2, 4), 16);
+            const b = parseInt(hex.substring(4, 6), 16);
+            return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+        }
+
+        // 添加图层列表更新函数
+        function updateLayersList() {
+            const layersList = document.getElementById('layers-list');
+            if (!layersList) return;
+
+            // 保留基础图层
+            const baseLayersHtml = `
+                <div class="layer-item">
+                    <button class="layer-button gaode-layer" data-layer="gaode">
+                        <div class="layer-icon"></div>
+                        <span>高德地图</span>
+                    </button>
+                </div>
+                <div class="layer-item">
+                    <button class="layer-button arcgis-layer" data-layer="arcgis">
+                        <div class="layer-icon"></div>
+                        <span>ArcGIS卫星影像</span>
+                    </button>
+                </div>
+            `;
+
+            // 添加本地图层
+            let localLayersHtml = '';
+            localLayers.forEach((layer, name) => {
+                localLayersHtml += `
+                    <div class="layer-item">
+                        <div class="layer-info">
+                            <input type="checkbox" ${layer.getVisible() ? 'checked' : ''} 
+                                   onchange="toggleLayerVisibility('${name}')">
+                            <span>${name}</span>
+                        </div>
+                        <div class="layer-controls">
+                            <button title="上移" onclick="moveLayer('${name}', 'up')">↑</button>
+                            <button title="下移" onclick="moveLayer('${name}', 'down')">↓</button>
+                            <button title="删除" onclick="removeLayer('${name}')">×</button>
+                        </div>
+                    </div>
+                `;
+            });
+
+            layersList.innerHTML = baseLayersHtml + localLayersHtml;
+        }
+
+        // 添加图层可见性切换函数
+        function toggleLayerVisibility(layerName) {
+            const layer = localLayers.get(layerName);
+            if (layer) {
+                layer.setVisible(!layer.getVisible());
+            }
+        }
+
+        // 添加图层移动函数
+        function moveLayer(layerName, direction) {
+            const layer = localLayers.get(layerName);
+            if (!layer) return;
+
+            const layers = Array.from(localLayers.entries());
+            const currentIndex = layers.findIndex(([name]) => name === layerName);
+            
+            if (direction === 'up' && currentIndex > 0) {
+                // 向上移动
+                [layers[currentIndex], layers[currentIndex - 1]] = [layers[currentIndex - 1], layers[currentIndex]];
+            } else if (direction === 'down' && currentIndex < layers.length - 1) {
+                // 向下移动
+                [layers[currentIndex], layers[currentIndex + 1]] = [layers[currentIndex + 1], layers[currentIndex]];
+            }
+
+            // 更新图层顺序
+            localLayers.clear();
+            layers.forEach(([name, layer]) => {
+                localLayers.set(name, layer);
+            });
+
+            // 更新显示
+            updateLayersList();
+        }
+    </script>
+</body>
+</html>
